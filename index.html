@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Exact-Count Go Fish</title>
+<title>Go Fish Online</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%230f4d33'/%3E%3Ctext x='50' y='70' font-size='62' text-anchor='middle'%3E🐟%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Outfit:wght@600;800;900&display=swap" rel="stylesheet">
 <style>
@@ -297,8 +298,8 @@
   .chk { display: flex; gap: 8px; align-items: center; margin-top: 12px; } .chk input { width: auto; min-height: 0; }
   .seat { position: relative; flex-wrap: wrap; } .seat.pick { border-color: var(--sky); background: #17566f; }
   .seat.dis { opacity: .5; } .kick { position: absolute; top: 2px; right: 4px; padding: 0 6px; min-height: 22px; background: #8a2b2b; font-size: .75rem; }
-  .fanm { position: relative; width: 66px; height: 30px; flex: none; margin-left: auto; }
-  .mb { position: absolute; left: var(--o); bottom: 0; width: 16px; height: 23px; border-radius: 3px; border: 1.5px solid #fff;
+  .fanm { --fs: 1; position: relative; width: calc(66px * var(--fs)); height: calc(30px * var(--fs)); flex: none; margin-left: auto; }
+  .mb { position: absolute; left: calc(var(--o) * var(--fs)); bottom: 0; width: calc(16px * var(--fs)); height: calc(23px * var(--fs)); border-radius: 3px; border: 1.5px solid #fff;
     background: repeating-linear-gradient(45deg,#2b4fa8 0 3px,#1f3b80 3px 6px); transform: rotate(var(--r)); transform-origin: 50% 120%; }
   .actionbar { grid-template-columns: 1fr; }
   #btnAsk { grid-column: 1 / -1; }
@@ -310,6 +311,26 @@
   @keyframes nope { 20%,60% { transform: translateX(-6px); } 40%,80% { transform: translateX(6px); } }
   @keyframes bk { 30% { box-shadow: 0 0 0 4px var(--gold), 0 0 28px var(--gold); } }
   .fab.intop { position: static; margin-left: 8px; }
+  .fcnt { position: absolute; right: -4px; top: -9px; font-size: .62rem; background: #000b; border-radius: 6px; padding: 0 4px; }
+  .ver { color: var(--muted); font-size: .75rem; text-align: center; margin-top: 10px; }
+  .hs { display: flex; gap: 8px; align-items: center; margin-top: 14px; } .hs button { min-height: 36px; border: 2px solid transparent; }
+  .hs button.on { border-color: var(--gold); background: #2e9c6c; } .hs button:disabled { opacity: 1; cursor: default; }
+  body.ingame { min-height: 0; height: 100dvh; overflow: hidden; }
+  @media (max-width: 640px) {
+    #screen-game { padding: 4px 6px calc(4px + env(safe-area-inset-bottom)); }
+    .topbar { padding: 3px 10px; margin-bottom: 4px; font-size: .82rem; }
+    .table { gap: 4px; padding: 0; }
+    #seats { grid-template-columns: repeat(2, 1fr); gap: 4px; }
+    .seat { padding: 4px 7px; gap: 6px; flex-wrap: nowrap; border-radius: 10px; }
+    .s-name { font-size: .88rem; } .s-stats { font-size: .78rem; gap: 8px; }
+    .fanm { --fs: .72; }
+    .actionbar { display: flex; gap: 6px; align-items: center; padding: 4px 6px; }
+    .tlabel { display: none; }
+    #cntRow { gap: 4px; flex: none; } .cb { min-width: 38px; min-height: 38px; padding: 0 6px; }
+    #btnAsk { flex: 1; min-height: 38px; padding: 4px 8px; font-size: .88rem; line-height: 1.1; }
+    #note { min-height: 0; margin-top: 2px; }
+    .dock { padding-top: 2px; }
+  }
   @media (prefers-reduced-motion: reduce) {
     .card { transition-duration: .01s; }
     .wave .l { animation-duration: 2.4s; }
@@ -379,8 +400,7 @@
 
 <!-- ================= SETUP SCREEN ================= -->
 <div id="screen-setup" class="center-wrap">
-  <h1>🐟 Exact-Count Go Fish</h1>
-  <div class="subtitle">Peer-to-peer multiplayer for 2–8 players. Guess the <b>exact</b> number of cards!</div>
+  <h1>🐟 Go Fish Online</h1>
   <div class="panel">
     <label class="small" for="inName">Your name</label>
     <input id="inName" maxlength="16" placeholder="e.g. Qasim" autocomplete="off">
@@ -397,9 +417,7 @@
     <div id="setupStatus"></div>
     <div id="rejoinBox" class="hidden" style="margin-top:14px"><button id="btnRejoin" class="secondary" style="width:100%"></button></div>
   </div>
-  <div class="muted" style="font-size:.85rem;text-align:center">
-    The host's browser tab runs the game. If the host closes the tab, the game ends.
-  </div>
+  <div class="ver">Version <span class="vtxt"></span></div>
 </div>
 
 <!-- ================= LOBBY SCREEN ================= -->
@@ -411,12 +429,14 @@
     <div class="row" style="justify-content:center"><button id="btnCopy" class="secondary">Copy Room ID</button><button id="btnInvite">Copy invite link</button></div>
   </div>
   <div class="panel">
-    <h3>Players (<span id="lobbyCount">1</span>/4)</h3>
+    <h3>Players (<span id="lobbyCount">1</span>/8)</h3>
     <div id="lobbyPlayers"></div>
+    <div class="hs"><span class="muted">Starting hand:</span><button class="secondary hsb" data-hs="4">4 cards</button><button class="secondary hsb" data-hs="5">5 cards</button></div>
     <div class="row" style="margin-top:16px">
       <button id="btnStart">Start Game</button>
     </div>
     <div id="lobbyHint" class="muted" style="margin-top:8px"></div>
+    <div class="ver">Version <span class="vtxt"></span></div>
   </div>
 </div>
 
@@ -485,6 +505,7 @@
       <label class="small" for="mp3">Host: play an MP3 for everyone (max 6 MB)</label><input id="mp3" type="file" accept="audio/*">
       <label class="chk"><input id="allowMid" type="checkbox" checked> Allow joining mid-game</label>
     </div>
+    <div class="ver">Version <span class="vtxt"></span></div>
   </div>
 </div>
 <div id="toast"></div>
@@ -499,7 +520,7 @@
 /* ==================================================================
    1. CONSTANTS & SMALL HELPERS
    ================================================================== */
-const VERSION = '3.2';                                // bump on every release: old cached pages get a clear 'refresh' message
+const VERSION = '3.3';                                // bump on every release: old cached pages get a clear 'refresh' message
 const PEER_OPTS = {};                              // TURN slot (off): { config: { iceServers: [ {urls:'stun:stun.l.google.com:19302'}, /* {urls:'turn:...',username:'',credential:''} */ ] } }
 const PEER_PREFIX = 'exactgofish-';                 // makes our room IDs unlikely to collide on the public broker
 const CODE_CHARS  = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no confusing 0/O/1/I
@@ -507,7 +528,7 @@ const RANKS       = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
 const SUITS       = ['♠','♥','♦','♣'];
 const MAX_PLAYERS = 8;
 const GRACE = 20000;                              // ms the game waits for a freshly disconnected player
-const HAND_SIZE   = 5;
+let HAND_SIZE     = 4;                             // host picks 4 or 5 in the lobby
 const NUM_WORDS   = ['zero','one','two','three','four'];
 const RANK_NAMES  = { A:'Ace', J:'Jack', Q:'Queen', K:'King' };
 const SUIT_ID     = { '♠':'s-spade', '♥':'s-heart', '♦':'s-diamond', '♣':'s-club' };
@@ -608,7 +629,7 @@ const curPlayer = () => G.players[G.turn];
 const byId = id => G.players.find(p => p.id === id);
 
 function hostInit() {
-  G = { phase: 'lobby', players: [], deck: [], turn: 0, events: [], seq: 0, nextId: 1, winners: [], allowMid: true, kicked: [], music: null };
+  G = { phase: 'lobby', players: [], deck: [], turn: 0, events: [], seq: 0, nextId: 1, winners: [], allowMid: true, kicked: [], music: null, handSize: HAND_SIZE };
   const me = newPlayer(0, uniqueName(myName), null);   // the host is always player id 0
   G.players.push(me);
   myId = 0;
@@ -813,6 +834,7 @@ function buildStateFor(p) {
     turnId: G.phase === 'playing' ? curPlayer().id : null,
     deckCount: G.deck.length,
     allowMid: G.allowMid,
+    handSize: G.handSize,
     busy: G.busy || '', busyWho: G.busyWho || '', turnLeft: G.turnEnd ? Math.max(0, G.turnEnd - Date.now()) : 0,
     players: G.players.map(q => ({ id: q.id, name: q.name, cardCount: q.hand.length, books: q.books.slice(), connected: q.connected, graceLeft: Math.max(0, q.graceEnd - Date.now()) })),
     events: G.events,
@@ -1179,7 +1201,7 @@ function layoutFan() {
   const ch = Math.round(cw * 1.4);
   const lh = Math.round(ch * 0.17);        // hover lift
   const ls = Math.round(ch * 0.27);        // selected lift
-  const topPad = Math.round(ch * 0.4);     // room above the fan for lifted cards
+  const topPad = Math.round(ch * 0.34);     // room above the fan for lifted cards
 
   let thMax = 0, R = 0;
   if (n > 1) {
@@ -1531,6 +1553,7 @@ function renderLobby(state) {
     (isHost && p.id !== 0 ? ' <button class="kick" style="position:static;float:right" data-kick="' + p.id + '">Kick</button>' : '') + '</div>'
   ).join('');
   $('hostOnly').classList.toggle('hidden', !isHost);
+  document.querySelectorAll('.hsb').forEach(b => { b.classList.toggle('on', Number(b.dataset.hs) === state.handSize); b.disabled = !isHost; });
   $('btnStart').classList.toggle('hidden', !isHost);
   $('btnStart').disabled = state.players.length < 2;
   $('lobbyHint').textContent = isHost
@@ -1557,14 +1580,13 @@ function renderGame(state) {
     const chips = p.books.map(b => '<span class="chip">' + esc(b) + '</span>').join('');
     const initial = esc((Array.from(p.name)[0] || '?').toUpperCase());
     const can = p.id !== me && p.cardCount > 0;
-    const k = Math.min(p.cardCount, 8);
-    const backs = Array.from({ length: k }, (_, i) => '<i class="mb" style="--r:' + ((i - (k - 1) / 2) * 9) + 'deg;--o:' + (i * 7) + 'px"></i>').join('');
+    const k = p.cardCount, step = k > 1 ? Math.min(7, 50 / (k - 1)) : 0, spread = k > 1 ? Math.min(9, 64 / (k - 1)) : 0;
+    const backs = Array.from({ length: k }, (_, i) => '<i class="mb" style="--r:' + ((i - (k - 1) / 2) * spread) + 'deg;--o:' + (i * step) + 'px"></i>').join('') + (k > 9 ? '<b class="fcnt">' + k + '</b>' : '');
     return '<div class="seat' + (isTurn ? ' turn' : '') + (p.id === me ? ' me' : (can ? ' clickable' : ' dis')) + (p.id === tgt ? ' pick' : '') + '" data-pid="' + p.id + '" data-name="' + esc(p.name) + '">' +
       (isHost && p.id !== 0 ? '<button class="kick" data-kick="' + p.id + '">✖</button>' : '') +
-      '<div class="avatar">' + initial + '</div>' +
       '<div class="s-main"><div class="s-name">' + esc(p.name) + (p.id === me ? ' (you)' : '') + (p.id === state.hostId ? ' 👑' : '') +
       (p.connected ? '' : ' <span class="off">offline</span>') + '</div>' +
-      '<div class="s-stats"><span>🃏 ' + p.cardCount + '</span><span>📚 ' + p.books.length + '</span></div>' +
+      '<div class="s-stats"><span>📚 ' + p.books.length + '</span></div>' +
       (chips ? '<div class="chips">' + chips + '</div>' : '') + '</div>' +
       (p.id !== me ? '<div class="fanm" title="' + p.cardCount + ' cards">' + backs + '</div>' : '') + '</div>';
   }).join('');
@@ -1660,16 +1682,15 @@ setInterval(() => {                                   // live countdown while wa
     setHover(hitTest(x, y));
   });
   fan.addEventListener('pointerleave', e => { if (e.pointerType !== 'touch') setHover(-1); });
-  fan.addEventListener('pointerdown', e => {
+  let touchPickAt = 0;
+  fan.addEventListener('pointerup', e => {            // touch: select the moment the finger lifts, no hover animation first
     if (e.pointerType !== 'touch') return;
     const [x, y] = fanPoint(e);
     const idx = hitTest(x, y);
-    if (idx >= 0) {                                   // a short tap: pop the card up for a moment
-      setHover(idx);
-      setTimeout(() => setHover(-1), 380);
-    }
+    if (idx >= 0) { touchPickAt = Date.now(); setHover(-1); pickCard(idx); }
   });
   fan.addEventListener('click', e => {
+    if (Date.now() - touchPickAt < 600) return;       // already handled by pointerup
     const [x, y] = fanPoint(e);
     const idx = hitTest(x, y);
     if (idx >= 0) pickCard(idx);
@@ -1716,6 +1737,8 @@ $('bgReset').onclick = () => { setLS('gf_bg', ''); document.body.style.backgroun
 $('vol').value = Math.round(bgm.volume * 100);
 $('vol').oninput = e => { bgm.volume = e.target.value / 100; setLS('gf_vol', e.target.value); };
 
+document.querySelectorAll('.hsb').forEach(b => b.onclick = () => { if (isHost && G && G.phase === 'lobby') { G.handSize = HAND_SIZE = Number(b.dataset.hs); broadcast(); } });
+document.querySelectorAll('.vtxt').forEach(x => x.textContent = VERSION);
 $('allowMid').onchange = e => { if (isHost && G) { G.allowMid = e.target.checked; broadcast(); } };
 $('mp3').onchange = async e => {
   const f = e.target.files[0]; if (!f || !isHost) return;
@@ -1745,7 +1768,7 @@ $('btnInvite').onclick = () => {
 })();
 
 /* ---------- 45s turn timer ---------- */
-const TURN_MS = 45000;
+const TURN_MS = 90000;
 let turnTimer = null, turnEndAt = 0;
 function armTurnTimer() {                              // host: called after every advance()
   clearTimeout(turnTimer);
@@ -1776,7 +1799,7 @@ function placeFab() {
   else if (!inGame && f.parentNode !== document.body) { document.body.appendChild(f); f.classList.remove('intop'); }
   $('fabChat').style.display = lastState ? '' : 'none';
 }
-const _render0 = render; render = function (st) { _render0(st); turnEndAt = st.turnLeft ? Date.now() + st.turnLeft : 0; placeFab(); };
+const _render0 = render; render = function (st) { if (st.handSize) HAND_SIZE = st.handSize; _render0(st); document.body.classList.toggle('ingame', st.phase !== 'lobby'); turnEndAt = st.turnLeft ? Date.now() + st.turnLeft : 0; placeFab(); };
 placeFab();
 let evSince = 0;
 setInterval(() => { if (evBusy) { if (!evSince) evSince = Date.now(); else if (Date.now() - evSince > 9000) { evBusy = false; evSince = 0; pump(); } } else evSince = 0; }, 1500);
