@@ -520,10 +520,10 @@
 /* ==================================================================
    1. CONSTANTS & SMALL HELPERS
    ================================================================== */
-const VERSION = '3.3';                                // bump on every release: old cached pages get a clear 'refresh' message
+const VERSION = '3.4';                                // bump on every release: old cached pages get a clear 'refresh' message
 const PEER_OPTS = {};                              // TURN slot (off): { config: { iceServers: [ {urls:'stun:stun.l.google.com:19302'}, /* {urls:'turn:...',username:'',credential:''} */ ] } }
 const PEER_PREFIX = 'exactgofish-';                 // makes our room IDs unlikely to collide on the public broker
-const CODE_CHARS  = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no confusing 0/O/1/I
+const CODE_CHARS  = 'ABCDEFGHJKMNPQRSTUVWXYZ';           // letters only, no confusing I/L/O (23^5 codes)
 const RANKS       = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
 const SUITS       = ['♠','♥','♦','♣'];
 const MAX_PLAYERS = 8;
@@ -643,12 +643,16 @@ function startGame() {
   G.events = []; G.winners = [];
   G.players.forEach(p => { p.hand = []; p.books = []; p.note = ''; });
   G.phase = 'playing';
-  emit({ t: 'start' });
-  // Deal 5 cards each, then immediately resolve any lucky 4-of-a-kind in the opening hand.
-  G.players.forEach(p => { p.hand = G.deck.splice(-HAND_SIZE); sortHand(p); });
+  // One card at a time, round-robin. The gap shrinks only for big tables so a deal never takes more than ~8s.
+  const total = G.players.length * HAND_SIZE, gap = Math.min(250, Math.floor(8000 / total)), dur = 450, order = [];
+  for (let r = 0; r < HAND_SIZE; r++) G.players.forEach(p => order.push(p.id));
+  emit({ t: 'start', order, gap, dur });
+  G.players.forEach(p => { p.hand = G.deck.splice(-HAND_SIZE); p.dealt = p.hand.map(c => c.rank + c.suit); sortHand(p); });
   G.players.forEach(p => settle(p));
   G.turn = randInt(G.players.length);
   advance();
+  G.busy = 'deal';                                     // no asking until the last card lands
+  setTimeout(() => { G.busy = ''; armTurnTimer(); broadcast(); }, (order.length - 1) * gap + dur + 400);
   broadcast();
 }
 
@@ -747,7 +751,7 @@ function advance() {
  */
 function handleMove(pid, msg) {
   if (G.phase !== 'playing') return 'The game is not in progress.';
-  if (G.busy) return 'Hold on, the fish is still being drawn.';
+  if (G.busy) return 'Hold on, one moment…';
   const p = curPlayer();
   if (p.id !== pid) return 'It is not your turn.';
   const t = byId(Number(msg.target));
@@ -839,7 +843,7 @@ function buildStateFor(p) {
     players: G.players.map(q => ({ id: q.id, name: q.name, cardCount: q.hand.length, books: q.books.slice(), connected: q.connected, graceLeft: Math.max(0, q.graceEnd - Date.now()) })),
     events: G.events,
     winners: G.winners,
-    you: { id: p.id, hand: p.hand, note: p.note }
+    you: { id: p.id, hand: p.hand, note: p.note, deal: p.dealt || [] }
   };
 }
 /** Send each guest their personal view; render the host's own view locally. */
@@ -916,7 +920,7 @@ function onHostData(conn, msg) {
       if (G.phase === 'playing' && G.deck.length < HAND_SIZE) return rejectConn(conn, 'Too few cards left in the deck to join.');
       who = newPlayer(G.nextId++, uniqueName(msg.name), conn);
       G.players.push(who);
-      if (G.phase === 'playing') { who.hand = G.deck.splice(-HAND_SIZE); sortHand(who); settle(who); emit({ t: 'joined', name: who.name }); }
+      if (G.phase === 'playing') { who.hand = G.deck.splice(-HAND_SIZE); who.dealt = who.hand.map(c => c.rank + c.suit); sortHand(who); settle(who); emit({ t: 'joined', name: who.name, pid: who.id, n: who.dealt.length }); }
     }
     conn._pid = who.id;
     try { conn.send({ type: 'welcome', token: who.token }); if (G.music) conn.send({ type: 'music', name: G.music.name, buf: G.music.buf }); } catch (e) {}
@@ -1001,6 +1005,10 @@ const bgm = new Audio(); bgm.loop = true;
 const getLS = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } };
 const setLS = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
 bgm.volume = Number(getLS('gf_vol', 25)) / 100;
+// Default track for everyone: paste a DIRECT audio link between the quotes, e.g. 'https://files.catbox.moe/abc123.mp3'.
+// It streams from that host (nothing is sent between players). A track the host uploads in Settings replaces it.
+const DEFAULT_MUSIC_URL = '';
+if (DEFAULT_MUSIC_URL) bgm.src = DEFAULT_MUSIC_URL;
 function playMusic(buf) {
   if (bgm.src) URL.revokeObjectURL(bgm.src);
   bgm.src = URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' }));
@@ -1170,7 +1178,7 @@ function renderHand(hand) {
     }
     return el;
   });
-  $('fanEmpty').classList.toggle('hidden', hand.length > 0);
+  $('fanEmpty').classList.toggle('hidden', hand.length > 0 || dealHide.size > 0);
   layoutFan();
   if (fresh.length) {
     void fan.offsetWidth;                                   // commit the 'enter' state first
@@ -1380,7 +1388,7 @@ function endpoint(name) {
   const s = lastState, me = s && s.players.find(q => q.id === s.you.id);
   return me && me.name === name ? $('fanWrap') : seatEl(name);
 }
-function fly(from, to, n, delay) {
+function fly(from, to, n, delay, dur) {
   if (REDUCED || !from || !to || !from.animate) return;
   const a = from.getBoundingClientRect(), b = to.getBoundingClientRect();
   for (let i = 0; i < n; i++) {
@@ -1393,12 +1401,52 @@ function fly(from, to, n, delay) {
       { opacity: 1, offset: .12 },
       { transform: 'translate(' + mx + 'px,' + my + 'px) rotate(' + ((i - (n - 1) / 2) * 16) + 'deg)', offset: .5 },
       { transform: 'translate(' + tx + 'px,' + ty + 'px) rotate(0deg)', opacity: .9 }
-    ], { duration: 650, delay: delay + i * 90, easing: 'cubic-bezier(.3,.7,.3,1)', fill: 'both' }).onfinish = () => d.remove();
+    ], { duration: dur || 650, delay: delay + i * 90, easing: 'cubic-bezier(.3,.7,.3,1)', fill: 'both' }).onfinish = () => d.remove();
   }
 }
 function seatFx(name, cls) { const el = seatEl(name); if (el) { el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); } }
 const shake = name => seatFx(name, 'nope'), pop = name => seatFx(name, 'bk');
 
+/* ---------- dealing: cards fly from the deck one at a time; your own cards appear as each one lands ---------- */
+let dealHide = new Set(), dealShown = {}, dealRemain = 0, everRendered = false;
+function prepDeal(st) {                               // runs BEFORE the first render of a deal, so nothing flashes in early
+  if (st.phase === 'lobby') return;
+  const evs = st.events || [], maxSeq = Math.max(0, ...evs.map(x => x.seq));
+  if (!everRendered && maxSeq) {                      // joining straight into a running game: skip history, but play my own join deal
+    const mine = evs.find(x => x.t === 'joined' && x.pid === st.you.id && x.seq === maxSeq);
+    lastSeq = mine ? maxSeq - 1 : maxSeq;
+  }
+  evs.forEach(x => {
+    if (x.seq <= lastSeq) return;
+    if (x.t === 'start') {
+      dealShown = {}; st.players.forEach(q => { dealShown[q.id] = 0; });
+      dealHide = new Set(st.you.hand.map(c => c.rank + c.suit)); dealRemain = (x.order || []).length;
+    } else if (x.t === 'joined' && x.pid !== undefined) {
+      dealShown[x.pid] = 0; dealRemain += x.n || 0;
+      if (x.pid === st.you.id) dealHide = new Set(st.you.hand.map(c => c.rank + c.suit));
+    }
+  });
+}
+function endDeal() {
+  dealHide.clear(); dealShown = {}; dealRemain = 0;
+  if (lastState && lastState.phase !== 'lobby') renderGame(lastState);
+}
+function runDeal(e, cb) {
+  const order = e.order || [], s = lastState;
+  if (!s || !order.length || REDUCED) { endDeal(); return cb(); }
+  const mine = (s.you.deal || []).slice();
+  order.forEach((pid, i) => {
+    const pl = s.players.find(q => q.id === pid); if (!pl) return;
+    const t = i * e.gap;
+    fly($('deckIcon'), endpoint(pl.name), 1, t, e.dur);
+    setTimeout(() => {                                // this card has landed
+      dealRemain = Math.max(0, dealRemain - 1); dealShown[pid] = (dealShown[pid] || 0) + 1;
+      if (pid === lastState.you.id) { const k = mine.shift(); if (k) dealHide.delete(k); }
+      renderGame(lastState);
+    }, t + e.dur);
+  });
+  setTimeout(() => { endDeal(); cb(); }, (order.length - 1) * e.gap + e.dur + 120);
+}
 function enqueueEvents(list) { list.forEach(e => evQ.push(e)); pump(); }
 function pump() {
   if (evBusy) return;
@@ -1411,15 +1459,15 @@ function playEvent(e, done) {
   switch (e.t) {
     case 'start':
       setAsk(''); clearExtras();
-      setOutcome('🎴 Game on! Everyone was dealt ' + HAND_SIZE + ' cards.', 'sys');
-      return done();
+      setOutcome('🎴 Dealing the cards…', 'sys');
+      return runDeal(e, () => { setOutcome('🎴 Game on! Everyone was dealt ' + HAND_SIZE + ' cards.', 'sys'); done(); });
     case 'success':                              // big wavy splash first, then the result text
-      fly(endpoint(e.tname), endpoint(e.name), e.count, 250);      // only a successful pull flies
       return showSplash(e, () => {
         setAsk(askText(e));
         setOutcome(fillName(PULL_PHRASES[e.phrase % PULL_PHRASES.length], e.name), 'good');
         clearExtras();
-        done();
+        fly(endpoint(e.tname), endpoint(e.name), e.count, 0);      // the cards fly once the splash is over
+        setTimeout(done, 750 + e.count * 90);
       });
     case 'ask':
       clearExtras(); setAsk('');                       // while waiting: the ask is the big text
@@ -1460,7 +1508,8 @@ function playEvent(e, done) {
       return done();
     case 'wait': addExtra('📡 ' + e.name + ' dropped. Waiting 20s for them to return…', 'info'); return done();
     case 'back': addExtra('✅ ' + e.name + ' is back!', 'info'); return done();
-    case 'joined': addExtra('👋 ' + e.name + ' joined mid-game with ' + HAND_SIZE + ' cards', 'info'); return done();
+    case 'joined': addExtra('👋 ' + e.name + ' joined mid-game with ' + (e.n || HAND_SIZE) + ' cards', 'info');
+      return runDeal({ order: Array(e.n || HAND_SIZE).fill(e.pid), gap: 90, dur: 380 }, done);
     case 'kick': addExtra('🥾 ' + e.name + ' was kicked; ' + e.n + ' cards went back into the deck (' + e.deck + ' now)', 'info'); return done();
     case 'over':
       setAsk('');
@@ -1480,6 +1529,8 @@ function applyStatus() {
   let txt, cls;
   if (s.phase === 'over') {
     txt = '🏁 Game over'; cls = 'st-over';
+  } else if (s.busy === 'deal') {
+    txt = '🎴 Dealing the cards…'; cls = 'st-wait';
   } else if (s.busy === 'ask') {
     txt = '🤔 ' + s.busyWho + ' is checking their hand…'; cls = 'st-wait';
   } else if (s.busy) {
@@ -1567,21 +1618,21 @@ function renderGame(state) {
   const me = state.you.id;
 
   // --- top bar ---
-  $('deckCount').textContent = state.deckCount;
+  $('deckCount').textContent = state.deckCount + dealRemain;
   $('roomTag').textContent = state.roomCode;
 
   // --- seats = target buttons, in turn order starting after me ---
   const iMe = state.players.findIndex(p => p.id === me);
   const ordered = state.players.slice(iMe + 1).concat(state.players.slice(0, iMe + 1));
-  $('deckIcon').style.setProperty('--dk', Math.min(1, state.deckCount / 52));
+  $('deckIcon').style.setProperty('--dk', Math.min(1, (state.deckCount + dealRemain) / 52));
   $('hostOnly').classList.toggle('hidden', !isHost);
   $('seats').innerHTML = ordered.map(p => {
     const isTurn = state.phase === 'playing' && p.id === state.turnId;
     const chips = p.books.map(b => '<span class="chip">' + esc(b) + '</span>').join('');
     const initial = esc((Array.from(p.name)[0] || '?').toUpperCase());
     const can = p.id !== me && p.cardCount > 0;
-    const k = p.cardCount, step = k > 1 ? Math.min(7, 50 / (k - 1)) : 0, spread = k > 1 ? Math.min(9, 64 / (k - 1)) : 0;
-    const backs = Array.from({ length: k }, (_, i) => '<i class="mb" style="--r:' + ((i - (k - 1) / 2) * spread) + 'deg;--o:' + (i * step) + 'px"></i>').join('') + (k > 9 ? '<b class="fcnt">' + k + '</b>' : '');
+    const k = dealShown[p.id] !== undefined ? Math.min(p.cardCount, dealShown[p.id]) : p.cardCount, step = k > 1 ? Math.min(7, 50 / (k - 1)) : 0, spread = k > 1 ? Math.min(9, 64 / (k - 1)) : 0;
+    const backs = Array.from({ length: k }, (_, i) => '<i class="mb" style="--r:' + ((i - (k - 1) / 2) * spread) + 'deg;--o:' + (i * step) + 'px"></i>').join('');
     return '<div class="seat' + (isTurn ? ' turn' : '') + (p.id === me ? ' me' : (can ? ' clickable' : ' dis')) + (p.id === tgt ? ' pick' : '') + '" data-pid="' + p.id + '" data-name="' + esc(p.name) + '">' +
       (isHost && p.id !== 0 ? '<button class="kick" data-kick="' + p.id + '">✖</button>' : '') +
       '<div class="s-main"><div class="s-name">' + esc(p.name) + (p.id === me ? ' (you)' : '') + (p.id === state.hostId ? ' 👑' : '') +
@@ -1596,7 +1647,7 @@ function renderGame(state) {
   // --- action form first (it decides which rank is selected), then the fan ---
   refreshForm(state);
   $('note').textContent = state.you.note || '';
-  renderHand(state.you.hand);
+  renderHand(state.you.hand.filter(c => !dealHide.has(c.rank + c.suit)));   // cards still 'in the air' stay hidden
 
   // --- announcements: queue only events we haven't seen yet (de-duplicated by seq) ---
   const fresh = (state.events || []).filter(e => e.seq > lastSeq);
@@ -1799,7 +1850,7 @@ function placeFab() {
   else if (!inGame && f.parentNode !== document.body) { document.body.appendChild(f); f.classList.remove('intop'); }
   $('fabChat').style.display = lastState ? '' : 'none';
 }
-const _render0 = render; render = function (st) { if (st.handSize) HAND_SIZE = st.handSize; _render0(st); document.body.classList.toggle('ingame', st.phase !== 'lobby'); turnEndAt = st.turnLeft ? Date.now() + st.turnLeft : 0; placeFab(); };
+const _render0 = render; render = function (st) { if (st.handSize) HAND_SIZE = st.handSize; prepDeal(st); _render0(st); everRendered = true; document.body.classList.toggle('ingame', st.phase !== 'lobby'); turnEndAt = st.turnLeft ? Date.now() + st.turnLeft : 0; placeFab(); };
 placeFab();
 let evSince = 0;
 setInterval(() => { if (evBusy) { if (!evSince) evSince = Date.now(); else if (Date.now() - evSince > 9000) { evBusy = false; evSince = 0; pump(); } } else evSince = 0; }, 1500);
