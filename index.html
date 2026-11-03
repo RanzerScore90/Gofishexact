@@ -172,7 +172,7 @@
   @keyframes splashIn  { from { transform: scale(.4) rotate(-3deg); opacity: 0; } to { transform: scale(1); opacity: 1; } }
   @keyframes splashOut { from { transform: scale(1); opacity: 1; } to { transform: scale(.7); opacity: 0; } }
   .wave {
-    font-family: Outfit, "Trebuchet MS", system-ui, sans-serif;
+    font-family: "Trebuchet MS", "Segoe UI Black", system-ui, sans-serif;
     font-weight: 900; font-size: clamp(34px, 9vw, 92px); line-height: 1.15;
   }
   .wave .w { display: inline-block; white-space: nowrap; margin: 0 .14em; }
@@ -279,6 +279,11 @@
     .dock { padding-top: 3px; }
   }
 
+  /* Card corner font: drop cardfont.woff2 / .otf / .ttf next to index.html and it is used automatically (falls back to Georgia). */
+  @font-face { font-family: CardFont; src: url('cardfont.woff2') format('woff2'), url('cardfont.otf') format('opentype'), url('cardfont.ttf') format('truetype'); font-display: swap; }
+  #tbar { height: 5px; border-radius: 3px; background: #0006; margin-top: 6px; overflow: hidden; }
+  #tbar i { display: block; height: 100%; width: 100%; background: var(--gold); transition: width .25s linear; }
+  #tbar.low i { background: var(--danger); }
   h1, h2, h3, .roomcode, .ab-outcome { font-family: Outfit, Inter, sans-serif; }
   .fab { position: fixed; top: 8px; right: 8px; z-index: 150; display: flex; gap: 6px; }
   .fab button { min-height: 38px; padding: 4px 11px; background: #000a; position: relative; }
@@ -375,7 +380,7 @@
 <!-- ================= SETUP SCREEN ================= -->
 <div id="screen-setup" class="center-wrap">
   <h1>🐟 Exact-Count Go Fish</h1>
-  <div class="subtitle">Peer-to-peer multiplayer for 2–4 players. Guess the <b>exact</b> number of cards!</div>
+  <div class="subtitle">Peer-to-peer multiplayer for 2–8 players. Guess the <b>exact</b> number of cards!</div>
   <div class="panel">
     <label class="small" for="inName">Your name</label>
     <input id="inName" maxlength="16" placeholder="e.g. Qasim" autocomplete="off">
@@ -432,6 +437,7 @@
       <div class="ab-outcome" id="abOutcome"></div>
       <div class="ab-extras" id="abExtras"></div>
       <div class="ab-status" id="abStatus"></div>
+      <div id="tbar" class="hidden"><i></i></div>
     </div>
 
     <div id="overBanner" class="panel hidden">
@@ -493,13 +499,13 @@
 /* ==================================================================
    1. CONSTANTS & SMALL HELPERS
    ================================================================== */
-const VERSION = '3.1';                                // bump on every release: old cached pages get a clear 'refresh' message
+const VERSION = '3.2';                                // bump on every release: old cached pages get a clear 'refresh' message
 const PEER_OPTS = {};                              // TURN slot (off): { config: { iceServers: [ {urls:'stun:stun.l.google.com:19302'}, /* {urls:'turn:...',username:'',credential:''} */ ] } }
 const PEER_PREFIX = 'exactgofish-';                 // makes our room IDs unlikely to collide on the public broker
 const CODE_CHARS  = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no confusing 0/O/1/I
 const RANKS       = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
 const SUITS       = ['♠','♥','♦','♣'];
-const MAX_PLAYERS = 4;
+const MAX_PLAYERS = 8;
 const GRACE = 20000;                              // ms the game waits for a freshly disconnected player
 const HAND_SIZE   = 5;
 const NUM_WORDS   = ['zero','one','two','three','four'];
@@ -735,7 +741,7 @@ function handleMove(pid, msg) {
 
   // Announce the ask now; resolve it after ASK_DELAY so everyone can read it before the answer appears.
   emit({ t: 'ask', name: p.name, tname: t.name, rank, count });
-  G.busy = true;
+  G.busy = 'ask'; G.busyWho = t.name;
   broadcast();
   setTimeout(() => resolveMove(p, t, rank, count), ASK_DELAY);
   return null;
@@ -759,7 +765,7 @@ function resolveMove(p, t, rank, count) {
   } else {
     // ---- MISS: say so now, fish FISH_DELAY later ----
     emit({ t: 'fail', name: p.name, tname: t.name, rank, count, phrase: randInt(FAIL_PHRASES.length) });
-    G.busy = true;
+    G.busy = 'fish'; G.busyWho = '';
     broadcast();
     setTimeout(() => finishFish(p, rank), FISH_DELAY);
   }
@@ -807,7 +813,7 @@ function buildStateFor(p) {
     turnId: G.phase === 'playing' ? curPlayer().id : null,
     deckCount: G.deck.length,
     allowMid: G.allowMid,
-    busy: !!G.busy,
+    busy: G.busy || '', busyWho: G.busyWho || '', turnLeft: G.turnEnd ? Math.max(0, G.turnEnd - Date.now()) : 0,
     players: G.players.map(q => ({ id: q.id, name: q.name, cardCount: q.hand.length, books: q.books.slice(), connected: q.connected, graceLeft: Math.max(0, q.graceEnd - Date.now()) })),
     events: G.events,
     winners: G.winners,
@@ -883,7 +889,7 @@ function onHostData(conn, msg) {
       emit({ t: 'back', name: who.name });
     } else {
       if (G.phase === 'over') return rejectConn(conn, 'That game just ended. Ask the host for a new round.');
-      if (G.players.length >= MAX_PLAYERS) return rejectConn(conn, 'The room is full (4 players max).');
+      if (G.players.length >= MAX_PLAYERS) return rejectConn(conn, 'The room is full (' + MAX_PLAYERS + ' players max).');
       if (G.phase === 'playing' && !G.allowMid) return rejectConn(conn, 'The host has turned off joining mid-game.');
       if (G.phase === 'playing' && G.deck.length < HAND_SIZE) return rejectConn(conn, 'Too few cards left in the deck to join.');
       who = newPlayer(G.nextId++, uniqueName(msg.name), conn);
@@ -1069,7 +1075,7 @@ function cardSVG(rank, suit) {
   const ten = rank === '10';
   // Corner index: rank over a small suit symbol. The bottom-right copy is the same group rotated 180deg.
   const corner =
-    '<text x="11.5" y="' + (ten ? 20 : 21) + '" text-anchor="middle" font-family="Georgia, Times New Roman, serif" font-weight="700" font-size="' + (ten ? 17 : 21) + '"' +
+    '<text x="11.5" y="' + (ten ? 20 : 21) + '" text-anchor="middle" font-family="CardFont, Georgia, Times New Roman, serif" font-weight="700" font-size="' + (ten ? 17 : 21) + '"' +
     (ten ? ' letter-spacing="-1.5"' : '') + ' fill="currentColor">' + rank + '</text>' +
     '<use href="' + sid + '" x="5" y="25" width="13" height="13"/>';
   let body = '';
@@ -1394,19 +1400,22 @@ function playEvent(e, done) {
         done();
       });
     case 'ask':
-      clearExtras(); setAsk(askText(e));
-      setOutcome('🤔 ' + e.tname + ' checks their hand…', 'sys');
+      clearExtras(); setAsk('');                       // while waiting: the ask is the big text
+      setOutcome(askText(e), 'sys');
+      return done();
+    case 'timeout':
+      clearExtras(); setAsk('');
+      setOutcome('⏰ ' + e.name + ' ran out of time!', 'bad');
       return done();
     case 'fail':
       setAsk(askText(e));
       setOutcome(fillName(FAIL_PHRASES[e.phrase % FAIL_PHRASES.length], e.name), 'bad');
       clearExtras();
-      addExtra('🎣 ' + e.name + ' has to go fish…', 'info');
       shake(e.tname);
       return done();
     case 'fish':
       clearExtras();
-      addExtra(e.drew ? '🎣 ' + e.name + ' fished a card from the deck (' + e.deck + ' left)' : '🎣 The deck is empty, so ' + e.name + ' draws nothing', 'info');
+      if (!e.drew) addExtra('🎣 The deck is empty, so ' + e.name + ' draws nothing', 'info');
       if (e.lucky) setOutcome('🍀 Lucky catch! ' + e.name + ' fished the exact rank they asked for and goes again!', 'good');
       return done();
     case 'book':
@@ -1449,15 +1458,17 @@ function applyStatus() {
   let txt, cls;
   if (s.phase === 'over') {
     txt = '🏁 Game over'; cls = 'st-over';
+  } else if (s.busy === 'ask') {
+    txt = '🤔 ' + s.busyWho + ' is checking their hand…'; cls = 'st-wait';
   } else if (s.busy) {
-    txt = '⏳ Waiting for the result…'; cls = 'st-wait';
+    txt = '🎣 Fishing…'; cls = 'st-wait';
   } else if (s.turnId === s.you.id) {
-    txt = '🟢 Your turn! Tap a player, tap a card, pick a count.'; cls = 'st-mine';
+    txt = '🟢 Your turn!'; cls = 'st-mine';
   } else {
     const who = s.players.find(p => p.id === s.turnId);
     txt = who && !who.connected && graceAt[who.id] > Date.now()
       ? '📡 Waiting ' + Math.ceil((graceAt[who.id] - Date.now()) / 1000) + 's for ' + who.name + ' to reconnect…'
-      : '⏳ Waiting for ' + (who ? who.name : '…') + ' to declare their targets...';
+      : '⏳ ' + (who ? who.name : '…') + "'s turn";
     cls = 'st-wait';
   }
   const key = cls + '|' + txt;
@@ -1733,6 +1744,30 @@ $('btnInvite').onclick = () => {
   if (ses && ses.name) $('inName').value = ses.name;
 })();
 
+/* ---------- 45s turn timer ---------- */
+const TURN_MS = 45000;
+let turnTimer = null, turnEndAt = 0;
+function armTurnTimer() {                              // host: called after every advance()
+  clearTimeout(turnTimer);
+  if (!G || G.phase !== 'playing') { if (G) G.turnEnd = 0; return; }
+  const p = curPlayer();
+  G.turnEnd = Date.now() + TURN_MS;
+  turnTimer = setTimeout(() => turnTimeout(p), TURN_MS);
+}
+function turnTimeout(p) {
+  if (!G || G.phase !== 'playing' || curPlayer() !== p) return;
+  if (G.busy) { turnTimer = setTimeout(() => turnTimeout(p), 1000); return; }   // let a pending result finish first
+  emit({ t: 'timeout', name: p.name });
+  passTurn(); advance(); broadcast();
+}
+const _advance0 = advance; advance = function () { _advance0(); armTurnTimer(); };
+setInterval(() => {
+  const s = lastState, b = $('tbar');
+  if (!s || s.phase !== 'playing' || s.busy || !turnEndAt) { b.classList.add('hidden'); return; }
+  const left = Math.max(0, turnEndAt - Date.now());
+  b.classList.remove('hidden'); b.firstChild.style.width = (left / TURN_MS * 100) + '%'; b.classList.toggle('low', left < 10000);
+}, 250);
+
 /* ---------- top-bar buttons, event watchdog ---------- */
 function placeFab() {
   const f = document.querySelector('.fab'), tb = document.querySelector('#screen-game .topbar');
@@ -1741,7 +1776,7 @@ function placeFab() {
   else if (!inGame && f.parentNode !== document.body) { document.body.appendChild(f); f.classList.remove('intop'); }
   $('fabChat').style.display = lastState ? '' : 'none';
 }
-const _render0 = render; render = function (st) { _render0(st); placeFab(); };
+const _render0 = render; render = function (st) { _render0(st); turnEndAt = st.turnLeft ? Date.now() + st.turnLeft : 0; placeFab(); };
 placeFab();
 let evSince = 0;
 setInterval(() => { if (evBusy) { if (!evSince) evSince = Date.now(); else if (Date.now() - evSince > 9000) { evBusy = false; evSince = 0; pump(); } } else evSince = 0; }, 1500);
