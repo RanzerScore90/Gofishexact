@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Go Fish Online</title>
+<meta property="og:type" content="website"><meta property="og:site_name" content="Go Fish Online"><meta property="og:title" content="Go Fish Online">
+<meta property="og:url" content="https://gofishex.github.io/lobby/">
+<meta property="og:image" content="https://file.garden/auxypIh_GSVvs_VS/New%20Project%20(15).png"><meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%230f4d33'/%3E%3Ctext x='50' y='70' font-size='62' text-anchor='middle'%3E🐟%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Outfit:wght@600;800;900&display=swap" rel="stylesheet">
@@ -494,7 +497,7 @@
   </div>
 </div>
 
-<div class="fab"><button id="fabChat" title="Chat">💬<span id="unread" class="hidden">0</span></button><button id="fabSet" title="Settings">⚙️</button></div>
+<div class="fab"><button id="fabMus" title="Pause / play music (just for you)">⏸</button><button id="fabChat" title="Chat">💬<span id="unread" class="hidden">0</span></button><button id="fabSet" title="Settings">⚙️</button></div>
 <div id="drawer" class="drawer hidden">
   <div id="paneChat"><div id="chatLog"></div><div class="row"><input id="chatIn" maxlength="200" placeholder="Message…" autocomplete="off"><button id="chatSend">Send</button></div></div>
   <div id="paneSet" class="hidden">
@@ -520,7 +523,7 @@
 /* ==================================================================
    1. CONSTANTS & SMALL HELPERS
    ================================================================== */
-const VERSION = '3.4';                                // bump on every release: old cached pages get a clear 'refresh' message
+const VERSION = '3.5';                                // bump on every release: old cached pages get a clear 'refresh' message
 const PEER_OPTS = {};                              // TURN slot (off): { config: { iceServers: [ {urls:'stun:stun.l.google.com:19302'}, /* {urls:'turn:...',username:'',credential:''} */ ] } }
 const PEER_PREFIX = 'exactgofish-';                 // makes our room IDs unlikely to collide on the public broker
 const CODE_CHARS  = 'ABCDEFGHJKMNPQRSTUVWXYZ';           // letters only, no confusing I/L/O (23^5 codes)
@@ -629,7 +632,7 @@ const curPlayer = () => G.players[G.turn];
 const byId = id => G.players.find(p => p.id === id);
 
 function hostInit() {
-  G = { phase: 'lobby', players: [], deck: [], turn: 0, events: [], seq: 0, nextId: 1, winners: [], allowMid: true, kicked: [], music: null, handSize: HAND_SIZE };
+  G = { phase: 'lobby', players: [], deck: [], turn: 0, events: [], seq: 0, nextId: 1, winners: [], allowMid: true, kicked: [], music: DEFAULT_MUSIC_URL ? { name: 'Default track', startedAt: Date.now() } : null, handSize: HAND_SIZE };
   const me = newPlayer(0, uniqueName(myName), null);   // the host is always player id 0
   G.players.push(me);
   myId = 0;
@@ -923,8 +926,16 @@ function onHostData(conn, msg) {
       if (G.phase === 'playing') { who.hand = G.deck.splice(-HAND_SIZE); who.dealt = who.hand.map(c => c.rank + c.suit); sortHand(who); settle(who); emit({ t: 'joined', name: who.name, pid: who.id, n: who.dealt.length }); }
     }
     conn._pid = who.id;
-    try { conn.send({ type: 'welcome', token: who.token }); if (G.music) conn.send({ type: 'music', name: G.music.name, buf: G.music.buf }); } catch (e) {}
+    try {
+      conn.send({ type: 'welcome', token: who.token, music: G.music ? { custom: !!G.music.buf, startedAt: G.music.startedAt } : null });
+      if (G.music && G.music.buf) conn.send({ type: 'music', name: G.music.name, buf: G.music.buf, startedAt: G.music.startedAt });
+    } catch (e) {}
     broadcast();
+  } else if (msg.type === 'ping') {
+    try { conn.send({ type: 'pong', t0: msg.t0, th: Date.now() }); } catch (e) {}
+  } else if (msg.type === 'musicReady') {
+    const q = G.players.find(x => x.id === conn._pid);
+    if (q && G.musicAcks) { G.musicAcks.add(q.id); checkMusicBarrier(); }
   } else if (msg.type === 'move') {
     const p = G.players.find(x => x.id === conn._pid);
     if (!p) return;
@@ -1004,17 +1015,67 @@ function chatAdd(name, text, sys) {
 const bgm = new Audio(); bgm.loop = true;
 const getLS = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } };
 const setLS = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
-bgm.volume = Number(getLS('gf_vol', 25)) / 100;
+bgm.volume = Number(getLS('gf_vol', 15)) / 100;
+bgm.preload = 'auto';
 // Default track for everyone: paste a DIRECT audio link between the quotes, e.g. 'https://files.catbox.moe/abc123.mp3'.
 // It streams from that host (nothing is sent between players). A track the host uploads in Settings replaces it.
-const DEFAULT_MUSIC_URL = 'https://file.garden/auxypIh_GSVvs_VS/Never%20Gonna%20Give%20You%20Up%20(8%20Bit%20Dubstep%20Remix%20Cover%20Version)%20%5BTribute%20to%20Rick%20Astley%5D%20-%208%20Bit%20Universe.mp3';
+const DEFAULT_MUSIC_URL = '';
+// Per-room Discord invites ('<host> invited you to play go fish!'): deploy discord-worker.js on Cloudflare and paste its URL here. Empty = plain link.
+const INVITE_BASE = '';
 if (DEFAULT_MUSIC_URL) bgm.src = DEFAULT_MUSIC_URL;
-function playMusic(buf) {
-  if (bgm.src) URL.revokeObjectURL(bgm.src);
-  bgm.src = URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' }));
-  bgm.play().catch(() => {});                          // blocked until the first tap; the click handler below retries
+/* Everyone plays the same track from one shared clock: position = (hostTime - startedAt) mod duration.
+   Guests measure how far their clock is from the host's (ping/pong), so a start time sent by the host means the same instant everywhere.
+   A late joiner or reconnecting player simply downloads the file, then jumps to the current position. */
+const mus = { startedAt: 0, loaded: false, custom: false, name: '' };
+let musPaused = false, musT = null, clockOff = 0;                     // clockOff = hostTime - localTime
+const cs = [];
+function onPong(m) {                                                  // keep the lowest-latency sample of the last 8
+  const t1 = Date.now(), rtt = t1 - m.t0;
+  cs.push({ rtt, off: m.th + rtt / 2 - t1 }); if (cs.length > 8) cs.shift();
+  clockOff = cs.reduce((a, b) => b.rtt < a.rtt ? b : a).off;
+  syncMusic();
 }
-document.addEventListener('click', () => { if (bgm.src && bgm.paused) bgm.play().catch(() => {}); });
+function startPings() { cs.length = 0; let n = 0; const go = () => { if (hostConn && hostConn.open) hostConn.send({ type: 'ping', t0: Date.now() }); if (++n < 6) setTimeout(go, 350); }; go(); }
+setInterval(() => { if (!isHost && hostConn && hostConn.open) hostConn.send({ type: 'ping', t0: Date.now() }); }, 20000);
+function syncMusic() {
+  if (!bgm.src || musPaused) return;
+  if (!mus.loaded) { if (!mus.custom && bgm.paused) bgm.play().catch(() => {}); return; }   // default track: playing starts the download
+  if (mus.custom && !mus.startedAt) { bgm.pause(); return; }                                // waiting until everyone has the file
+  if (!mus.startedAt) { if (bgm.paused) bgm.play().catch(() => {}); return; }               // not in a room yet: just play
+  const el = (Date.now() + clockOff - mus.startedAt) / 1000;
+  if (el < 0) { bgm.pause(); try { bgm.currentTime = 0; } catch (e) {} clearTimeout(musT); musT = setTimeout(syncMusic, -el * 1000); return; }
+  const d = bgm.duration, ok = isFinite(d) && d > 0, pos = ok ? el % d : el;
+  let diff = Math.abs(bgm.currentTime - pos); if (ok) diff = Math.min(diff, d - diff);
+  if (bgm.paused || diff > 0.25) { try { bgm.currentTime = pos; } catch (e) {} }
+  if (bgm.paused) bgm.play().catch(() => {});
+}
+bgm.addEventListener('canplay', () => {
+  if (mus.loaded) return;
+  mus.loaded = true;
+  if (mus.custom) { if (isHost) checkMusicBarrier(); else if (hostConn && hostConn.open) hostConn.send({ type: 'musicReady' }); }
+  syncMusic();
+});
+setInterval(syncMusic, 5000);                                         // drift correction
+document.addEventListener('click', () => syncMusic());                // first tap unlocks autoplay
+function playMusic(buf, name, startedAt) {
+  if (bgm.src && bgm.src.startsWith('blob:')) URL.revokeObjectURL(bgm.src);
+  mus.custom = true; mus.startedAt = startedAt || 0; mus.loaded = false; mus.name = name || '';
+  bgm.src = URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' }));
+  bgm.load();
+}
+function onMusicStart(t) { mus.startedAt = t; syncMusic(); }
+function checkMusicBarrier() {                                        // host: start once every connected player has the file
+  if (!G || !G.music || !G.music.buf || G.music.startedAt || !mus.loaded) return;
+  if (G.players.filter(q => q.id !== 0 && q.connected).every(q => G.musicAcks && G.musicAcks.has(q.id))) startMusic();
+}
+function startMusic() {
+  clearTimeout(G.musicTimer);
+  G.music.startedAt = Date.now() + 1200;                              // a moment in the future so every device can be ready
+  G.players.forEach(q => { if (q.id !== 0 && q.conn && q.conn.open) try { q.conn.send({ type: 'musicStart', startedAt: G.music.startedAt }); } catch (e) {} });
+  onMusicStart(G.music.startedAt);
+}
+const _hostInit0 = hostInit;
+hostInit = function () { const r = _hostInit0.apply(this, arguments); if (G && G.music && !G.music.buf) { mus.custom = false; mus.startedAt = G.music.startedAt; } return r; };
 
 /* ==================================================================
    6. GUEST: NETWORKING
@@ -1047,11 +1108,16 @@ function joinRoom(codeIn, tokIn, isRetry) {
     hostConn.on('open', () => hostConn.send({ type: 'join', name: myName, token: sessionTok, v: VERSION }));
     hostConn.on('data', msg => {
       if (!msg || typeof msg !== 'object') return;
-      if (msg.type === 'welcome') { gotWelcome = true; sessionTok = msg.token; retries = 0; saveSession(); }
+      if (msg.type === 'welcome') {
+        gotWelcome = true; sessionTok = msg.token; retries = 0; saveSession(); startPings();
+        if (msg.music && !msg.music.custom) { mus.custom = false; mus.startedAt = msg.music.startedAt; syncMusic(); }
+      }
+      else if (msg.type === 'pong') onPong(msg);
+      else if (msg.type === 'musicStart') onMusicStart(msg.startedAt);
       else if (msg.type === 'state') { joined = true; clearTimeout(timer); render(msg.state); }
       else if (msg.type === 'error') { toast(msg.msg); unlockAsk(); }
       else if (msg.type === 'chat') chatAdd(msg.name, msg.text, msg.sys);
-      else if (msg.type === 'music') playMusic(msg.buf);
+      else if (msg.type === 'music') playMusic(msg.buf, msg.name, msg.startedAt);
       else if (msg.type === 'kicked') { kickedOut = true; setLS('gf_session', ''); showOverlay('Kicked', 'The host removed you from the game.'); }
       else if (msg.type === 'rejected') { clearTimeout(timer); kickedOut = kickedOut || isRetry; setLS('gf_session', ''); if (isRetry && joined) showOverlay('Cannot rejoin', msg.reason); else fail(msg.reason); }
     });
@@ -1509,7 +1575,7 @@ function playEvent(e, done) {
     case 'wait': addExtra('📡 ' + e.name + ' dropped. Waiting 20s for them to return…', 'info'); return done();
     case 'back': addExtra('✅ ' + e.name + ' is back!', 'info'); return done();
     case 'joined': addExtra('👋 ' + e.name + ' joined mid-game with ' + (e.n || HAND_SIZE) + ' cards', 'info');
-      return runDeal({ order: Array(e.n || HAND_SIZE).fill(e.pid), gap: 90, dur: 380 }, done);
+      return runDeal({ order: Array(e.n || HAND_SIZE).fill(e.pid), gap: 250, dur: 450 }, done);
     case 'kick': addExtra('🥾 ' + e.name + ' was kicked; ' + e.n + ' cards went back into the deck (' + e.deck + ' now)', 'info'); return done();
     case 'over':
       setAsk('');
@@ -1795,14 +1861,16 @@ $('mp3').onchange = async e => {
   const f = e.target.files[0]; if (!f || !isHost) return;
   if (f.size > 6 * 1024 * 1024) { toast('That file is over 6 MB.'); return; }
   const buf = await f.arrayBuffer();
-  G.music = { name: f.name, buf };
-  playMusic(buf);
-  G.players.forEach(p => { if (p.conn && p.conn.open) try { p.conn.send({ type: 'music', name: f.name, buf }); } catch (x) {} });
-  toast('Now playing for everyone: ' + f.name);
+  G.music = { name: f.name, buf, startedAt: 0 }; G.musicAcks = new Set();
+  playMusic(buf, f.name, 0);
+  G.players.forEach(p => { if (p.conn && p.conn.open) try { p.conn.send({ type: 'music', name: f.name, buf, startedAt: 0 }); } catch (x) {} });
+  clearTimeout(G.musicTimer); G.musicTimer = setTimeout(() => { if (G.music && !G.music.startedAt) startMusic(); }, 12000);   // don't wait forever for a slow player
+  toast('Sending the track. It starts for everyone together once all players have it.');
 };
 
 $('btnInvite').onclick = () => {
-  const url = location.origin + location.pathname + '#' + $('lobbyCode').textContent;
+  const code = $('lobbyCode').textContent, hp = lastState && lastState.players.find(q => q.id === lastState.hostId);
+  const url = INVITE_BASE ? INVITE_BASE + '?host=' + encodeURIComponent(hp ? hp.name : '') + '&room=' + code : location.origin + location.pathname + '#' + code;
   if (navigator.clipboard) navigator.clipboard.writeText(url).then(() => toast('Invite link copied!'), () => toast(url));
   else toast(url);
 };
@@ -1841,6 +1909,8 @@ setInterval(() => {
   const left = Math.max(0, turnEndAt - Date.now());
   b.classList.remove('hidden'); b.firstChild.style.width = (left / TURN_MS * 100) + '%'; b.classList.toggle('low', left < 10000);
 }, 250);
+
+$('fabMus').onclick = () => { musPaused = !musPaused; $('fabMus').textContent = musPaused ? '▶️' : '⏸'; if (musPaused) bgm.pause(); else syncMusic(); };
 
 /* ---------- top-bar buttons, event watchdog ---------- */
 function placeFab() {
