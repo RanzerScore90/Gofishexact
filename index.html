@@ -1019,7 +1019,7 @@ bgm.volume = Number(getLS('gf_vol', 15)) / 100;
 bgm.preload = 'auto';
 // Default track for everyone: paste a DIRECT audio link between the quotes, e.g. 'https://files.catbox.moe/abc123.mp3'.
 // It streams from that host (nothing is sent between players). A track the host uploads in Settings replaces it.
-const DEFAULT_MUSIC_URL = 'https://file.garden/auxypIh_GSVvs_VS/Never%20Gonna%20Give%20You%20Up%20(8%20Bit%20Dubstep%20Remix%20Cover%20Version)%20%5BTribute%20to%20Rick%20Astley%5D%20-%208%20Bit%20Universe.mp3';
+const DEFAULT_MUSIC_URL = '';
 // Per-room Discord invites ('<host> invited you to play go fish!'): deploy discord-worker.js on Cloudflare and paste its URL here. Empty = plain link.
 const INVITE_BASE = '';
 if (DEFAULT_MUSIC_URL) bgm.src = DEFAULT_MUSIC_URL;
